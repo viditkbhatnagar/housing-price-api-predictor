@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query, Path, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, validator
 import joblib
 import numpy as np
@@ -10,6 +11,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 import json
 import statistics
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 # Load the model
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'model.pkl')
@@ -98,6 +101,21 @@ class HousingFeatures(BaseModel):
     AveOccup: float = Field(..., description="Average number of household members", ge=1, le=20)
     Latitude: float = Field(..., description="Block group latitude", ge=32, le=42)
     Longitude: float = Field(..., description="Block group longitude", ge=-125, le=-114)
+
+    class Config:
+        protected_namespaces = ()
+        json_schema_extra = {
+            "example": {
+                "MedInc": 8.3252,
+                "HouseAge": 41.0,
+                "AveRooms": 6.984127,
+                "AveBedrms": 1.023810,
+                "Population": 322.0,
+                "AveOccup": 2.555556,
+                "Latitude": 37.88,
+                "Longitude": -122.23
+            }
+        }
     
     @validator('AveBedrms')
     def validate_bedrooms(cls, v, values):
@@ -124,6 +142,9 @@ class BatchPredictionInput(BaseModel):
     properties: List[HousingFeatures] = Field(..., description="List of properties to predict", min_items=1, max_items=100)
     include_statistics: bool = Field(False, description="Include statistical analysis of predictions")
 
+    class Config:
+        protected_namespaces = ()
+
 # Enhanced response schemas
 class PredictionResponse(BaseModel):
     predicted_price: float = Field(..., description="Predicted price in hundreds of thousands")
@@ -142,12 +163,18 @@ class BatchPredictionResponse(BaseModel):
     batch_id: str
     processing_time_ms: float
 
+    class Config:
+        protected_namespaces = ()
+
 class ModelMetrics(BaseModel):
     model_type: str
     features: List[str]
     training_score: float
     feature_importance: Dict[str, float]
     model_version: str
+
+    class Config:
+        protected_namespaces = ()
 
 class APIHealth(BaseModel):
     status: str
@@ -156,6 +183,9 @@ class APIHealth(BaseModel):
     total_predictions: int
     error_rate: float
     last_prediction: Optional[datetime]
+
+    class Config:
+        protected_namespaces = ()
 
 # Helper functions
 def get_price_range(price: float) -> PriceRange:
@@ -182,31 +212,245 @@ def generate_prediction_id() -> str:
     return f"pred_{datetime.now().strftime('%Y%m%d%H%M%S')}_{np.random.randint(1000, 9999)}"
 
 # Root endpoint
-@app.get("/", tags=["General"])
-async def root() -> Dict[str, Any]:
+@app.get("/", response_class=HTMLResponse, tags=["General"])
+async def root():
     """
-    Welcome endpoint with API information and available routes.
+    Welcome page with API information and links.
     """
-    return {
-        "message": "🏠 Advanced Housing Price Prediction API",
-        "version": "2.0.0",
-        "documentation": {
-            "interactive": "/docs",
-            "redoc": "/redoc"
-        },
-        "main_endpoints": {
-            "predict": "/api/v1/predict",
-            "batch_predict": "/api/v1/predict/batch",
-            "health": "/api/v1/health",
-            "metrics": "/api/v1/metrics"
-        },
-        "analysis_endpoints": {
-            "history": "/api/v1/predictions/history",
-            "statistics": "/api/v1/predictions/statistics",
-            "neighborhood": "/api/v1/analysis/neighborhood"
-        }
-    }
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Housing Price Prediction API</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5; }
+            .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #333; }
+            .endpoints { background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; }
+            .endpoint { margin: 10px 0; }
+            a { color: #007bff; text-decoration: none; }
+            a:hover { text-decoration: underline; }
+            .button { display: inline-block; padding: 10px 20px; background: #007bff; color: white; border-radius: 5px; margin: 5px; }
+            .button:hover { background: #0056b3; color: white; text-decoration: none; }
+            .status { color: #28a745; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🏠 Housing Price Prediction API</h1>
+            <p>Welcome to the Advanced ML-powered Housing Price Prediction API!</p>
+            
+            <div class="endpoints">
+                <h2>Quick Links:</h2>
+                <a href="/docs" class="button">📚 Interactive API Docs</a>
+                <a href="/test" class="button">🧪 Test Data & Examples</a>
+                <a href="/redoc" class="button">📖 Alternative Docs</a>
+            </div>
+            
+            <div class="endpoints">
+                <h2>Main Endpoints:</h2>
+                <div class="endpoint">• <code>POST /api/v1/predict</code> - Single prediction</div>
+                <div class="endpoint">• <code>POST /api/v1/predict/batch</code> - Batch predictions</div>
+                <div class="endpoint">• <code>GET /api/v1/health</code> - API health check</div>
+                <div class="endpoint">• <code>GET /api/v1/model/info</code> - Model information</div>
+                <div class="endpoint">• <code>GET /test</code> - Test data generator</div>
+            </div>
+            
+            <p><span class="status">Status: API is running ✅</span></p>
+            <p><strong>Model:</strong> Linear Regression (California Housing Dataset)</p>
+            <p><strong>Version:</strong> 2.0.0</p>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 
+@app.get("/test", response_class=HTMLResponse, tags=["Testing"])
+async def get_test_data():
+    """
+    Interactive test data generator with copy-paste examples.
+    """
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>API Test Data Generator</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            .test-case { background: white; padding: 20px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+            h1, h2 { color: #333; }
+            pre { background: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; border: 1px solid #dee2e6; }
+            .copy-button { background: #28a745; color: white; border: none; padding: 5px 15px; border-radius: 3px; cursor: pointer; margin-top: 10px; }
+            .copy-button:hover { background: #218838; }
+            .endpoint { color: #007bff; font-weight: bold; }
+            .description { color: #666; margin: 10px 0; }
+            code { background: #f8f9fa; padding: 2px 5px; border-radius: 3px; }
+            .alert { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; padding: 10px; border-radius: 5px; margin-bottom: 20px; }
+        </style>
+        <script>
+            function copyToClipboard(elementId) {
+                const text = document.getElementById(elementId).innerText;
+                navigator.clipboard.writeText(text).then(() => {
+                    alert('Copied to clipboard!');
+                });
+            }
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🧪 API Test Data Generator</h1>
+            <div class="alert">
+                💡 <strong>Tip:</strong> Copy these examples and test them in <a href="/docs">API Documentation</a> or use them with cURL/Postman
+            </div>
+            
+            <div class="test-case">
+                <h2>1. Single Prediction - Luxury Property</h2>
+                <p class="endpoint">POST /api/v1/predict</p>
+                <p class="description">High-income Bay Area property with ocean views</p>
+                <pre id="test1">{
+  "MedInc": 10.5,
+  "HouseAge": 5.0,
+  "AveRooms": 8.5,
+  "AveBedrms": 3.5,
+  "Population": 250.0,
+  "AveOccup": 2.8,
+  "Latitude": 37.45,
+  "Longitude": -122.25
+}</pre>
+                <button class="copy-button" onclick="copyToClipboard('test1')">Copy JSON</button>
+            </div>
+            
+            <div class="test-case">
+                <h2>2. Single Prediction - Affordable Property</h2>
+                <p class="endpoint">POST /api/v1/predict</p>
+                <p class="description">Lower-income inland property</p>
+                <pre id="test2">{
+  "MedInc": 2.5,
+  "HouseAge": 35.0,
+  "AveRooms": 4.2,
+  "AveBedrms": 2.1,
+  "Population": 2500.0,
+  "AveOccup": 3.5,
+  "Latitude": 34.05,
+  "Longitude": -117.75
+}</pre>
+                <button class="copy-button" onclick="copyToClipboard('test2')">Copy JSON</button>
+            </div>
+            
+            <div class="test-case">
+                <h2>3. Batch Prediction</h2>
+                <p class="endpoint">POST /api/v1/predict/batch</p>
+                <p class="description">Multiple properties with statistics</p>
+                <pre id="test3">{
+  "properties": [
+    {
+      "MedInc": 8.3252,
+      "HouseAge": 41.0,
+      "AveRooms": 6.984127,
+      "AveBedrms": 1.023810,
+      "Population": 322.0,
+      "AveOccup": 2.555556,
+      "Latitude": 37.88,
+      "Longitude": -122.23
+    },
+    {
+      "MedInc": 3.8,
+      "HouseAge": 25.0,
+      "AveRooms": 5.2,
+      "AveBedrms": 2.0,
+      "Population": 1800.0,
+      "AveOccup": 3.2,
+      "Latitude": 33.79,
+      "Longitude": -117.89
+    },
+    {
+      "MedInc": 6.5,
+      "HouseAge": 8.0,
+      "AveRooms": 7.1,
+      "AveBedrms": 2.8,
+      "Population": 800.0,
+      "AveOccup": 2.7,
+      "Latitude": 38.52,
+      "Longitude": -121.50
+    }
+  ],
+  "include_statistics": true
+}</pre>
+                <button class="copy-button" onclick="copyToClipboard('test3')">Copy JSON</button>
+            </div>
+            
+            <div class="test-case">
+                <h2>4. Feature Impact Analysis</h2>
+                <p class="endpoint">POST /api/v1/analysis/feature-impact?feature_to_vary=MedInc&variation_steps=5</p>
+                <p class="description">Analyze how income affects price</p>
+                <pre id="test4">{
+  "MedInc": 5.0,
+  "HouseAge": 20.0,
+  "AveRooms": 6.0,
+  "AveBedrms": 2.0,
+  "Population": 2000.0,
+  "AveOccup": 3.0,
+  "Latitude": 35.0,
+  "Longitude": -119.0
+}</pre>
+                <button class="copy-button" onclick="copyToClipboard('test4')">Copy JSON</button>
+            </div>
+            
+            <div class="test-case">
+                <h2>5. cURL Examples</h2>
+                <p class="description">For command line testing (replace the URL with your deployment URL)</p>
+                <pre id="curl1">curl -X POST "https://housing-price-api-predictor.onrender.com/api/v1/predict" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "MedInc": 8.3252,
+    "HouseAge": 41.0,
+    "AveRooms": 6.984127,
+    "AveBedrms": 1.023810,
+    "Population": 322.0,
+    "AveOccup": 2.555556,
+    "Latitude": 37.88,
+    "Longitude": -122.23
+  }'</pre>
+                <button class="copy-button" onclick="copyToClipboard('curl1')">Copy cURL</button>
+            </div>
+            
+            <div class="test-case">
+                <h2>6. Python Request Example</h2>
+                <p class="description">For Python applications</p>
+                <pre id="python1">import requests
+
+url = "https://housing-price-api-predictor.onrender.com/api/v1/predict"
+data = {
+    "MedInc": 8.3252,
+    "HouseAge": 41.0,
+    "AveRooms": 6.984127,
+    "AveBedrms": 1.023810,
+    "Population": 322.0,
+    "AveOccup": 2.555556,
+    "Latitude": 37.88,
+    "Longitude": -122.23
+}
+
+response = requests.post(url, json=data)
+print(response.json())</pre>
+                <button class="copy-button" onclick="copyToClipboard('python1')">Copy Python</button>
+            </div>
+            
+            <div class="test-case">
+                <h2>Quick Links</h2>
+                <p>
+                    <a href="/docs">📚 Interactive API Documentation</a><br>
+                    <a href="/api/v1/health">🏥 Health Check</a><br>
+                    <a href="/api/v1/model/info">📊 Model Information</a><br>
+                    <a href="/">🏠 Home</a>
+                </p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 # Health check endpoint
 @app.get("/api/v1/health", response_model=APIHealth, tags=["Monitoring"])
 async def health_check() -> APIHealth:
